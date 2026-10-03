@@ -1,0 +1,16 @@
+# Starter .gitignore — expand once stack is chosen.
+node_modules/
+dist/
+build/
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+opencode/
+*.log
