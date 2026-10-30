@@ -1,7 +1,14 @@
-import { generateText } from "ai";
-import { resolveModel, modelIdOf } from "../engine/providers.ts";
-import { renderString } from "../engine/template.ts";
-import { NodeExecutionError, optionalNumber, requireString, type NodeDefinition } from "./types.ts";
+﻿import { HumanMessage, SystemMessage, type AIMessage } from "@langchain/core/messages";
+import type { NodeTypeMeta } from "../../../shared/types.ts";
+import { renderString, scopeOf } from "../engine/template.ts";
+import { DEFAULT_MODELS } from "../engine/providerMeta.ts";
+import { buildModel } from "../langgraph/models.ts";
+import {
+  NodeExecutionError,
+  optionalNumber,
+  requireString,
+  type NodeDefinition,
+} from "./types.ts";
 
 export const agent: NodeDefinition = {
   meta: {
@@ -73,56 +80,42 @@ export const agent: NodeDefinition = {
     ],
   },
 
-  async execute({ config, scope, signal, log }) {
+  async run({ config, state, signal, log }) {
     const provider = requireString(config, "provider", "mock");
-    const model = modelIdOf(provider, requireString(config, "model"));
-    const prompt = renderString(requireString(config, "prompt", "{{ input }}"), scope);
-    const system = requireString(config, "system").trim()
-      ? renderString(requireString(config, "system"), scope)
-      : undefined;
+    const modelId =
+      requireString(config, "model").trim() || DEFAULT_MODELS[provider as "openai"] || "gpt-4o-mini";
 
+    const prompt = renderString(requireString(config, "prompt", "{{ input }}"), scopeOf(state));
     if (!prompt.trim()) throw new NodeExecutionError("Prompt is empty after rendering.");
 
-    log(`${provider}/${model}`);
+    const system = requireString(config, "system").trim()
+      ? renderString(requireString(config, "system"), scopeOf(state))
+      : undefined;
+    log(`${provider}/${modelId}`);
 
-    if (provider === "mock") {
-      const preview = prompt.length > 400 ? `${prompt.slice(0, 400)}…` : prompt;
-      return {
-        output: {
-          text: `[mock:${model}] ${preview}`,
-          provider,
-          model,
-          usage: { inputTokens: 0, outputTokens: 0 },
-          mocked: true,
-        },
-      };
-    }
-
-    const result = await generateText({
-      model: resolveModel({
-        provider,
-        model,
-        apiKey: requireString(config, "apiKey").trim() || undefined,
-        baseURL: requireString(config, "baseURL").trim() || undefined,
-      }),
-      system,
-      prompt,
+    const model = buildModel({
+      provider,
+      model: modelId,
+      apiKey: requireString(config, "apiKey").trim() || undefined,
+      baseURL: requireString(config, "baseURL").trim() || undefined,
       temperature: optionalNumber(config, "temperature"),
       maxOutputTokens: optionalNumber(config, "maxOutputTokens"),
-      abortSignal: signal,
     });
 
-    log(`${result.usage.inputTokens ?? 0} in / ${result.usage.outputTokens ?? 0} out`);
-
+    const response = (await model.invoke(
+      system ? [new SystemMessage(system), new HumanMessage(prompt)] : [new HumanMessage(prompt)],
+      { signal, timeout: 120000 },
+    )) as AIMessage;
     return {
       output: {
-        text: result.text,
+        text: typeof response.content === "string" ? response.content : JSON.stringify(response.content),
         provider,
-        model,
+        model: modelId,
         usage: {
-          inputTokens: result.usage.inputTokens ?? 0,
-          outputTokens: result.usage.outputTokens ?? 0,
+          inputTokens: response.usage_metadata?.input_tokens ?? 0,
+          outputTokens: response.usage_metadata?.output_tokens ?? 0,
         },
+        mocked: Boolean(response.response_metadata?.["mocked"]),
       },
     };
   },

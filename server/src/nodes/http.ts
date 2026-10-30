@@ -1,5 +1,10 @@
-import { renderString, renderValue } from "../engine/template.ts";
-import { NodeExecutionError, optionalNumber, requireString, type NodeDefinition } from "./types.ts";
+import { renderString, renderValue, scopeOf } from "../engine/template.ts";
+import {
+  NodeExecutionError,
+  optionalNumber,
+  requireString,
+  type NodeDefinition,
+} from "./types.ts";
 
 export const http: NodeDefinition = {
   meta: {
@@ -45,10 +50,13 @@ export const http: NodeDefinition = {
     ],
   },
 
-  async execute({ config, scope, signal, log }) {
+  async run({ config, state, signal, log }) {
+    const scope = scopeOf(state);
     const url = renderString(requireString(config, "url"), scope).trim();
     if (!url) throw new NodeExecutionError("URL is empty after rendering.");
-    if (!/^https?:\/\//i.test(url)) throw new NodeExecutionError(`URL must start with http(s)://, got "${url}".`);
+    if (!/^https?:\/\//i.test(url)) {
+      throw new NodeExecutionError(`URL must start with http(s)://, got "${url}".`);
+    }
 
     const method = requireString(config, "method", "GET").toUpperCase();
     const headers = renderValue(config["headers"] ?? {}, scope);

@@ -1,4 +1,4 @@
-import type { NodeDefinition } from "./types.ts";
+import { NodeExecutionError, requireString, type NodeDefinition } from "./types.ts";
 
 export const manualTrigger: NodeDefinition = {
   meta: {
@@ -17,7 +17,8 @@ export const manualTrigger: NodeDefinition = {
       },
     ],
   },
-  async execute({ config }) {
+
+  async run({ config }) {
     const payload = config["payload"];
     if (payload === undefined || payload === null || payload === "") return { output: {} };
     if (typeof payload !== "object") return { output: { value: payload } };

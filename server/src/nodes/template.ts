@@ -1,4 +1,4 @@
-import { renderString } from "../engine/template.ts";
+import { renderString, scopeOf } from "../engine/template.ts";
 import { requireString, type NodeDefinition } from "./types.ts";
 
 export const template: NodeDefinition = {
@@ -18,8 +18,8 @@ export const template: NodeDefinition = {
       },
     ],
   },
-  async execute({ config, scope }) {
-    const rendered = renderString(requireString(config, "template"), scope);
-    return { output: { text: rendered } };
+
+  async run({ config, state }) {
+    return { output: { text: renderString(requireString(config, "template"), scopeOf(state)) } };
   },
 };

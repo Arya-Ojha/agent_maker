@@ -87,14 +87,14 @@ export type RunEvent =
       ts: number;
       nodeId: string;
       output: unknown;
-      durationMs: number;
+      durationMs?: number;
     }
   | {
       type: "node.failed";
       ts: number;
       nodeId: string;
       error: string;
-      durationMs: number;
+      durationMs?: number;
     }
   | { type: "node.skipped"; ts: number; nodeId: string; reason: string }
   | { type: "run.succeeded"; ts: number; output: unknown }

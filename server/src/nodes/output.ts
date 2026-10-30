@@ -1,4 +1,4 @@
-import { renderValue } from "../engine/template.ts";
+import { renderValue, scopeOf } from "../engine/template.ts";
 import { requireString, type NodeDefinition } from "./types.ts";
 
 export const output: NodeDefinition = {
@@ -18,9 +18,11 @@ export const output: NodeDefinition = {
       },
     ],
   },
-  async execute({ config, scope }) {
+
+  async run({ config, state }) {
     const raw = config["value"];
-    const value = raw === undefined || raw === null || raw === "" ? scope.input : renderValue(raw, scope);
-    return { output: value };
+    const value =
+      raw === undefined || raw === null || raw === "" ? state.input : renderValue(raw, scopeOf(state));
+    return { output: value, result: value };
   },
 };

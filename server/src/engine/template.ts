@@ -54,3 +54,17 @@ export function renderValue<T>(value: T, scope: Scope): unknown {
 export function ctx(scope: Scope, key: string): unknown {
   return scope[key];
 }
+
+/** Builds the template scope from a node's local state. */
+export function scopeOf(state: {
+  input: unknown;
+  outputs: Record<string, unknown>;
+  runId: string;
+  runInput: unknown;
+}): Scope {
+  return {
+    input: state.input,
+    nodes: state.outputs,
+    run: { id: state.runId, input: state.runInput ?? null },
+  };
+}

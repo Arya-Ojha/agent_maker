@@ -5,9 +5,9 @@ import { ifElse } from "./if.ts";
 import { manualTrigger } from "./manualTrigger.ts";
 import { output } from "./output.ts";
 import { template } from "./template.ts";
-import type { NodeRegistry } from "./types.ts";
+import type { NodeDefinition } from "./types.ts";
 
-export const registry: NodeRegistry = {
+export const registry: Record<NodeType, NodeDefinition> = {
   "manual.trigger": manualTrigger,
   agent,
   template,
@@ -20,6 +20,6 @@ export const nodeMetas: NodeTypeMeta[] = Object.values(registry).map((node) => n
 
 export const isNodeType = (value: string): value is NodeType => value in registry;
 
-export function definitionFor(type: NodeType) {
+export function definitionFor(type: NodeType): NodeDefinition | undefined {
   return registry[type];
 }

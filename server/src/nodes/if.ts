@@ -1,5 +1,5 @@
-import { renderString } from "../engine/template.ts";
 import { NodeExecutionError, requireString, type NodeDefinition } from "./types.ts";
+import { renderString, scopeOf } from "../engine/template.ts";
 
 const OPERATORS = [
   "equals",
@@ -12,13 +12,6 @@ const OPERATORS = [
 ] as const;
 
 type Operator = (typeof OPERATORS)[number];
-
-export const asText = (value: unknown): string => {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  return JSON.stringify(value);
-};
 
 export const ifElse: NodeDefinition = {
   meta: {
@@ -55,7 +48,8 @@ export const ifElse: NodeDefinition = {
     ],
   },
 
-  async execute({ config, scope }) {
+  async run({ config, state }) {
+    const scope = scopeOf(state);
     const left = renderString(requireString(config, "left"), scope);
     const right = renderString(requireString(config, "right"), scope);
     const operator = requireString(config, "operator", "contains") as Operator;
