@@ -1,13 +1,25 @@
-# Starter .gitignore — expand once stack is chosen.
 node_modules/
 dist/
 build/
+coverage/
+
+# Python leftovers (kept from the original starter)
 .venv/
 __pycache__/
 *.pyc
+
+# Secrets
 .env
 .env.*
 !.env.example
+
+# SQLite data (workflows + run history)
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Editors / OS
 .DS_Store
 Thumbs.db
 .idea/
