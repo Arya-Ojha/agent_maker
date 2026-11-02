@@ -9,7 +9,14 @@ export type NodeType =
   | "template"
   | "http"
   | "if"
-  | "output";
+  | "switch"
+  | "delay"
+  | "output"
+  | "set"
+  | "split"
+  | "merge"
+  | "code"
+  | "log";
 
 export interface Point {
   x: number;

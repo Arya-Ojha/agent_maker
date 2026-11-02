@@ -54,6 +54,9 @@ npm start                    # prod: API + built UI on :5175
   `node.skipped` by the run adapter).
 - Express 5 + zod validation at the route boundary. `node:sqlite` (`DatabaseSync`) is
   used directly — no ORM.
+- Every non-obvious choice gets an entry appended to `DECISIONS.md` in the same turn it
+  is made: context, decision, why, rejected alternatives, trade-offs, and `file:line`
+  references. Never rewrite old entries; supersede them with a new one.
 
 ## Gotchas
 

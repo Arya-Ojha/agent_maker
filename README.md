@@ -61,7 +61,14 @@ shared/  types shared by both sides (no runtime code)
 | Template | Composes a string from upstream values |
 | HTTP Request | `fetch` with templated URL/headers/body, JSON auto-parse |
 | If / Else | `true`/`false` output handles; only the taken branch runs |
+| Switch | First matching case (equals/contains/regex) or `else`; 5 output handles |
+| Delay | Waits N ms (capped at 5 min), abort-aware, passes input through |
 | Output | Final run result |
+| Edit Fields | Builds/merges an object from templated values |
+| Split Text | Splits text into `{ items, count }` |
+| Merge | Shallow/array/keyed combination of several parents |
+| Code | `new AsyncFunction("input", "nodes", "run", code)`; JSON-only return |
+| Debug Log | Writes a templated line to the run panel, passes input through |
 
 Node forms are generated from metadata the server exposes at `GET /api/node-types`,
 so adding a node means adding one file under `server/src/nodes/` and registering it.
@@ -73,6 +80,12 @@ so adding a node means adding one file under `server/src/nodes/` and registering
 2. Register it in `server/src/nodes/index.ts` and add its id to `NodeType` in
    `shared/types.ts`.
 3. Restart the server. The palette and inspector pick it up automatically.
+
+## Decisions
+
+Non-obvious choices, the alternatives rejected, and what each one costs are logged
+in [DECISIONS.md](DECISIONS.md). Append an entry whenever you change engine
+semantics, add a node, or pick between two reasonable designs.
 
 ## API
 
