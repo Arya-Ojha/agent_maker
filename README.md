@@ -19,6 +19,37 @@ Use a real model: select an Agent node, switch **Provider** to `openai` (or
 `anthropic` / `google`), and set the matching key in `server/.env`
 (see `.env.example`).
 
+## Build with AI
+
+Press **✦ AI** in the header to open the builder panel. Describe the workflow ("draft
+a tweet from a topic, then shorten it") and the model adds the nodes and edges to the
+canvas. Follow-up messages edit the graph in place: "add a debug log after the agent",
+"make the classify step use switch instead". You can keep editing by hand at any time;
+the AI applies deltas, so ids, positions and labels you touched survive.
+
+- Pick a **Provider** with `/provider` (or the pill above the chat): a window lists the
+  providers, then a second window takes that provider's key and, for OpenAI, an
+  optional base URL. Config is kept per provider, so switching back and forth does not
+  lose keys.
+- `/model` (or the model pill) asks the provider which models the key can use and shows
+  them in a searchable list; pick one, or type an id the listing did not include. The
+  key is stored in this browser (`localStorage`) and in server memory for the current
+  process — never in the workflow or the SQLite file. Leave it empty to use
+  `server/.env`.
+- Nothing is saved until you press **Save**, and nothing runs until you press
+  **▶ Run**. *Undo last AI change* restores the graph from before the last turn.
+- Set the provider to **Mock** to try the panel with no key: the first turn builds a
+  trigger → agent → output pipeline.
+- `Code` nodes are refused (a generated graph is untrusted input and `code` is
+  unsandboxed), and every answer is re-validated against the same rules as a real run
+  before it reaches the canvas. A turn may need two repair rounds, so a single request
+  can cost up to three model calls — watch the [free-tier
+  quota](https://ai.google.dev/gemini-api/docs/rate-limits) (Gemini flash is ~20
+  requests/day). If the provider returns 429 or rejects the key, the panel says so and
+  leaves the graph untouched. A call that does not answer within 60 seconds fails with
+  an error instead of spinning forever, and a custom base URL must start with
+  `http://` or `https://`.
+
 ## Production
 
 ```bash
@@ -92,6 +123,8 @@ semantics, add a node, or pick between two reasonable designs.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/api/node-types` | Node palette + form metadata |
+| POST | `/api/builder/models` | Models a provider key can use: `{ provider, apiKey?, baseURL? }` → `{ models }` |
+| POST | `/api/builder/chat` | AI builder turn: `{ message, graph, history, provider, model, apiKey? }` → `{ graph, reply, warnings }` |
 | GET/POST | `/api/workflows` | List / create |
 | GET/PUT/DELETE | `/api/workflows/:id` | Read / update / delete |
 | POST | `/api/workflows/:id/run` | Start a run, returns `{ runId }` |

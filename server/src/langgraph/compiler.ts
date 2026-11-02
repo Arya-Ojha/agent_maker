@@ -33,7 +33,8 @@ export interface Plan {
   outgoing: Map<string, GraphEdge[]>;
 }
 
-function planGraph(graph: Graph): Plan {
+/** Structural validation shared by the compiler and the AI builder. */
+export function planGraph(graph: Graph): Plan {
   const byId = new Map<string, GraphNode>();
   for (const node of graph.nodes) {
     if (byId.has(node.id)) throw new GraphError(`Duplicate node id "${node.id}".`);

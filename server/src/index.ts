@@ -20,6 +20,12 @@ import {
 import { executeGraph } from "./langgraph/run.ts";
 import { nodeMetas, isNodeType } from "./nodes/index.ts";
 import { seedDemoWorkflow } from "./seed.ts";
+import { runBuilderTurn } from "./builder/chat.ts";
+import { BuilderOpError } from "./builder/ops.ts";
+import { rememberKey } from "./builder/session.ts";
+import { listModels } from "./builder/modelList.ts";
+import { friendlyProviderError } from "./builder/providerError.ts";
+import { NodeExecutionError } from "./nodes/types.ts";
 
 try {
   process.loadEnvFile(resolve(process.env.AGENT_MAKER_ENV ?? ".env"));
@@ -74,6 +80,25 @@ const runBody = z.object({
   input: z.unknown().optional(),
 });
 
+const builderBody = z.object({
+  message: z.string().trim().min(1).max(4000),
+  graph: graphSchema,
+  history: z
+    .array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().max(8000) }))
+    .max(20)
+    .default([]),
+  provider: z.enum(["mock", "openai", "anthropic", "google"]),
+  model: z.string().trim().max(120).default(""),
+  apiKey: z.string().max(400).optional(),
+  baseURL: z.string().trim().max(400).optional(),
+});
+
+const modelsBody = z.object({
+  provider: z.enum(["mock", "openai", "anthropic", "google"]),
+  apiKey: z.string().max(400).optional(),
+  baseURL: z.string().trim().max(400).optional(),
+});
+
 /* ----------------------------- live run events ---------------------------- */
 
 type Listener = (event: StoredRunEvent) => void;
@@ -104,6 +129,39 @@ app.get("/api/health", (_req, res) => {
 
 app.get("/api/node-types", (_req, res) => {
   res.json(nodeMetas);
+});
+
+/* ------------------------------ AI builder ------------------------------- */
+
+app.post("/api/builder/models", async (req, res) => {
+  const parsed = modelsBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid model list request", issues: z.treeifyError(parsed.error) });
+    return;
+  }
+  try {
+    res.json({ models: await listModels(parsed.data) });
+  } catch (error) {
+    const friendly = friendlyProviderError(error);
+    const status = friendly instanceof NodeExecutionError ? 422 : 502;
+    res.status(status).json({ error: friendly.message });
+  }
+});
+
+app.post("/api/builder/chat", async (req, res) => {
+  const parsed = builderBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid builder request", issues: z.treeifyError(parsed.error) });
+    return;
+  }
+  try {
+    rememberKey(parsed.data.provider, parsed.data.apiKey);
+    res.json(await runBuilderTurn(parsed.data));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const status = error instanceof BuilderOpError || error instanceof NodeExecutionError ? 422 : 502;
+    res.status(status).json({ error: message });
+  }
 });
 
 app.get("/api/workflows", (_req, res) => {

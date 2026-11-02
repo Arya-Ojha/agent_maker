@@ -34,6 +34,7 @@ treat it as documentation, not a diary.
 - **Stack choices** — 0024–0032: React, Express, zod, SSE, npm workspaces, Node, LangChain, CSS, state
 - **Code structure** - 0033-0048: function shapes, arguments, return values, and why not the alternative
 - **Canvas interactions** - 0049: mouse-only edge removal
+- **AI builder** - 0050-0056: ops over graphs, server validation, layout, keys, safety, settings dialogs, timeouts
 
 ## Stack at a glance
 
@@ -1612,6 +1613,297 @@ hovering keeps the button mounted but repositions it on the next render.
 
 **Where:** `web/src/components/DeletableEdge.tsx:22`,
 `web/src/components/Canvas.tsx:23`, `web/src/styles.css:466`
+
+---
+
+### 0050 — The builder replies with ops, not a whole graph
+**Date:** 2026-11-03
+
+**Context:** The AI panel is conversational: "make a summarizer", then "add a log
+after the agent". A full-graph response every turn would mean the model re-emitting
+every node it did not touch, ids included.
+
+**Decision:** The model returns `{ reply, ops[] }` where ops are `add_node`,
+`update_node`, `delete_node`, `connect`, `disconnect`. The server applies them to the
+current graph and returns the result.
+
+**Rejected shape:**
+
+```json
+// Whole graph per turn: ~3x the tokens, and every turn risks renaming a node the
+// user just placed, orphaning its position, its run status and its edges.
+{ "nodes": [ { "id": "agent-3", "position": { "x": 420, "y": 260 }, ... } ], "edges": [...] }
+```
+
+**Why:** A delta touches only what changed, so ids, positions, labels and config
+survive by construction. It also makes "edit the current graph" the default instead
+of an afterthought, which is what the canvas is for.
+
+**Alternatives rejected:** Whole-graph regeneration (loses hand placement, costs
+tokens, and a hallucinated id silently rewires the canvas); a tool-calling loop with
+one tool per mutation and the model calling them in sequence (more capable, but N
+round trips, per-provider tool semantics, and much harder to validate up front); a
+client-side diff of two graphs (the model still has to emit the second graph, and
+diffs of graphs are ambiguous).
+
+**Trade-offs:** The ops are a mini-DSL that has to be documented in the prompt and
+kept in sync with `NodeType`. The model can reference an id it never creates — the
+single most common failure — which is why edges are deferred and there is a repair
+loop. Unlike a full graph, a partial op list can be *almost* right, so the failure
+mode is "one missing edge" rather than "nothing applies".
+
+**Where:** `server/src/builder/ops.ts:10`, `server/src/builder/chat.ts:196`,
+`web/src/components/BuilderPanel.tsx:76`
+
+---
+
+### 0051 — Nothing reaches the canvas without passing `planGraph`
+**Date:** 2026-11-03
+
+**Context:** The model can produce cycles, dangling edges, handles that no node
+emits, or config keys the node silently ignores.
+
+**Decision:** Every turn runs parse → applyOps → `validateGraph` (which reuses the
+compiler's own `planGraph`) → repair (up to two rounds) → lenient salvage. Only a
+graph that would compile is returned.
+
+**Why:** `planGraph` is the same check a save or a run performs, so "the builder
+accepted it" and "the engine can run it" are the same statement. Reusing it also
+means new engine rules (say, a new reserved id) apply to generation for free.
+
+**Alternatives rejected:** A separate builder validator (two rule sets that drift);
+trusting the model and letting Run fail later (the user has already lost their
+graph by then, and there is no undo); zod-only validation (shape, not topology — it
+cannot see a cycle).
+
+**Trade-offs:** A turn can take three model calls, which matters on a 20-requests/day
+free tier. Cycles are rejected exactly like the canvas rejects them, so the builder
+cannot create loops even when a user asks for one. `lintGraph` warns about unknown
+config keys instead of failing, because config is free-form by design (#0035) — a
+typo degrades to the node's default rather than an error.
+
+**Where:** `server/src/builder/chat.ts:214`, `server/src/builder/ops.ts:244`,
+`server/src/langgraph/compiler.ts:37`
+
+---
+
+### 0052 — Edge ops are deferred; node placement is the server's job
+**Date:** 2026-11-03
+
+**Context:** Models list `connect` before the `add_node` it refers to, and they
+cannot produce usable coordinates.
+
+**Decision:** `applyOps` applies node ops first and edge ops in a second pass.
+New nodes are placed 300px right of their parent, stacked 130px per sibling; a
+graph produced from scratch without parents falls into a 3-column grid.
+
+**Rejected shape:**
+
+```ts
+// Sequential apply: "connect a→b" before "add_node b" fails with a perfect answer.
+for (const op of ops) apply(op);
+```
+
+```ts
+// Asking the model for positions:
+{ "position": { "x": 742, "y": -80 } } // overlapping, off-canvas, or negative
+```
+
+**Why:** Deferring edges makes op order irrelevant, which removes a whole class of
+false rejections. Parent-relative placement gives a readable left-to-right graph
+without a layout engine, and never moves a node the user already positioned.
+
+**Alternatives rejected:** `dagre`/`elkjs` (better crossing minimization, but a
+dependency and a full re-layout that would move hand-placed nodes); asking the model
+for coordinates (reliably bad); placing every new node at a fixed point (piles up).
+
+**Trade-offs:** Sibling stacking is per-parent, not collision-aware, so two branches
+converging on the same child can overlap. A node added by `update_node` never moves
+if its parent later moves. Deferred edges mean a `disconnect` also runs late, so
+"disconnect then delete" behaves differently from the visual order in the ops list.
+
+**Where:** `server/src/builder/ops.ts:223`, `server/src/builder/ops.ts:72`
+
+---
+
+### 0053 — Provider keys live in browser storage and server memory, never SQLite
+**Date:** 2026-11-03
+
+**Context:** The user types a Gemini key in the panel. It must pay for generation
+*and* for running the agent nodes that get generated.
+
+**Decision:** The panel keeps `{provider, model, apiKey}` in `localStorage` and sends
+the key with each builder request; the server remembers it in a module-level `Map`
+(`builder/session.ts`) so `resolveKey` can fall back to it at run time. It is never
+written to the workflow graph or the database.
+
+**Rejected shape:**
+
+```ts
+// Tempting because the agent node already has an apiKey field: it would also be
+// exported with the workflow and stored in plaintext in SQLite.
+config: { provider: "google", apiKey: "AIza…" }
+```
+
+**Why:** Runs resolve keys through `resolveKey`, so one in-memory map serves both
+paths with no schema change. Keeping it out of `config` means a saved workflow can be
+shared without leaking a key, and the DB stays boring.
+
+**Alternatives rejected:** `.env` only (the user asked for a UI field, and it would
+need a server restart); per-node `apiKey` config (leaks into SQLite and exports);
+OS keychain (out of scope, platform-specific).
+
+**Trade-offs:** The key is global to the server process, not per browser — fine for a
+single-user local tool, wrong the moment this is multi-tenant. A restart forgets it
+(the UI still has it) and generated agent nodes keep only `provider`/`model`, so a
+missing key shows up at run time, not at generation time. `localStorage` is readable
+by any script on the origin.
+
+**Where:** `server/src/builder/session.ts:8`, `server/src/langgraph/models.ts:22`,
+`web/src/components/BuilderPanel.tsx:25`
+
+---
+
+### 0054 — The builder refuses `code` nodes and never runs what it builds
+**Date:** 2026-11-03
+
+**Context:** A `code` node is an unsandboxed `AsyncFunction` evaluated in the server
+process. A generated graph is untrusted input.
+
+**Decision:** `applyOps` drops `code` nodes with a warning; the panel applies the
+graph to the canvas but never starts a run.
+
+**Rejected shape:**
+
+```ts
+// "It's the user's own prompt, so it's safe" — until the prompt contains an
+// injected instruction, or the user shares the workflow.
+if (type === "code") allowWithWarning();
+```
+
+**Why:** Dropping is cheap and reversible (the user can add Code by hand and see the
+warning in the palette). Auto-running would turn one bad generation into outbound
+HTTP requests and arbitrary code execution without a second click.
+
+**Alternatives rejected:** Allow with a warning (a warning does not sandbox
+anything); block the whole turn (one stray node kills an otherwise good graph);
+sandboxing `code` (right long-term answer, but a separate project).
+
+**Trade-offs:** Users who ask for "a script that parses this" get a graph without the
+node and need to add it manually. HTTP nodes are still allowed, so a generated graph
+can call arbitrary hosts — the panel only surfaces warnings, not a host allowlist.
+
+**Where:** `server/src/builder/ops.ts:161`, `server/src/builder/catalog.ts:70`,
+`web/src/components/BuilderPanel.tsx:93`
+
+---
+
+### 0055 — Settings are slash commands, and the model list comes from the provider
+
+**Date:** 2026-11-03
+
+**Context:** The only way to change provider was an inline "Model settings"
+`<details>`. It had one key for whichever provider was selected (switching to OpenAI
+with a Gemini key still in the field is a guaranteed 401), no base URL, and a
+hardcoded model list that goes stale. The user asked for `/provider` to open a
+provider picker and then a configuration window, and `/model` to list what the key can
+actually call.
+
+**Decision:** The composer treats exactly `/provider` and `/model` as local commands —
+they open dialogs and never reach the model. `/provider` is two steps (pick a provider,
+then configure it), and config is stored per provider as `{ apiKey, baseURL }` in
+`localStorage`. `/model` calls `POST /api/builder/models`, which lists models through
+the provider API using the saved key, and shows the result in a searchable picker with
+manual id entry as a fallback.
+
+**Rejected shape:**
+
+```ts
+// One settings blob: switching provider inherits the previous key, and the model id
+// from a different vendor stays selected.
+{ provider: "openai", apiKey: "AIza…gemini…", model: "gemini-2.5-flash" }
+```
+
+**Why:** The chat textarea stays for prompts, and the state that decides which API
+gets called lives behind explicit windows instead of hidden syntax. Per-provider
+config removes the "wrong key for the selected provider" failure outright. Listing is
+server-side because the key already lives there for runs and because browser calls to
+`generativelanguage.googleapis.com` hit CORS; it is a POST because keys in a query
+string end up in logs and history. A live list also shows account-specific models the
+old presets could not know about.
+
+**Alternatives rejected:** Keeping the `<details>` form and adding a key map to it
+(same state, but no discovery and no base URL, and it competes with the chat for
+vertical space); sending `/provider` to the model (spends a request per settings
+change and the model cannot change its own credentials); fetching the list in the
+browser (CORS, and the key leaves the machine twice); refreshing hardcoded presets
+(perpetually behind, and wrong for custom base URLs).
+
+**Trade-offs:** Each `/model` open costs one provider request, and the three providers
+list differently — Gemini returns media/agent models that must be filtered to
+`gemini|gemma`, Anthropic requires an `anthropic-version` header, OpenAI's list
+includes embeddings and audio models that are filtered out with a regex. A failed
+listing is not fatal: the filter box doubles as manual entry. Per-provider storage
+changes the `localStorage` shape, so `loadSettings` migrates the v1 single `apiKey`
+into the provider that was active. Base URL is only offered for OpenAI, because
+`buildModel` ignores it for the other providers. Model listing prefers the pasted key
+over the environment, but *runs* still resolve `.env` first (#0053) — a pasted key can
+therefore list models and build graphs while executions keep using the server key.
+
+**Where:** `web/src/components/BuilderPanel.tsx:143`,
+`web/src/components/ProviderDialogs.tsx:57`,
+`web/src/components/ProviderDialogs.tsx:201`, `web/src/providers.ts:13`,
+`server/src/index.ts:136`, `server/src/builder/modelList.ts:44`
+
+---
+
+### 0056 — A hung model call fails after 60 seconds; base URLs must be http(s)
+
+**Date:** 2026-11-03
+
+**Context:** The panel shows "thinking…" for as long as the `busy` promise is
+unsettled, and nothing bounded a model call. A provider (or an OpenAI-compatible
+proxy, or a typo'd base URL that accepts the TCP connection) can hang forever, and a
+pasted `file:///…` path is not a URL any client can fetch. Both leave the user with a
+spinner and no explanation.
+
+**Decision:** `invokeModel` passes `AbortSignal.timeout(60_000)`; the client adds an
+outer 200s timeout to every API request. Timeouts, missing keys, 429s and 401s map to
+one-line actionable messages. Base URLs are validated as `http(s)` in the provider
+dialog and again on the server (`buildModel` and `modelList`) before any request.
+
+**Rejected shape:**
+
+```ts
+// Trusting the network: "thinking…" is rendered from `busy`, which only clears when
+// the promise settles. One stalled socket parks the panel until the page reloads.
+const reply = await model.invoke(messages);
+```
+
+**Why:** 60s is longer than a normal completion, including a slow free-tier call, and
+short enough that a retry is cheap. The 200s outer bound covers the worst case of
+three calls (initial + two repairs) so the browser can still report something if the
+server itself wedges. Validating the scheme in both places means the UI explains the
+mistake immediately and the server never turns a local path into a fetch.
+
+**Alternatives rejected:** No timeout (the reported bug); relying on provider SDK
+defaults (three providers, three different behaviours, and OpenAI-compatible proxies
+often have none); a 30s timeout (long generations and cold starts fail spuriously);
+client-side timeout only (the server keeps burning quota and repair rounds); accepting
+any URL and letting `fetch` fail (the error is `TypeError: fetch failed`, which does
+not say what to fix).
+
+**Trade-offs:** A genuinely slow call now fails and must be retried. Agent *runs* are
+not covered — node executions still have no per-call timeout, so a hanging provider
+can stall a run (the cancel button is the escape there). The 200s client bound means a
+stalled repair chain still occupies the panel for over three minutes before the outer
+timeout fires. The timeout is a single constant for all providers, so a provider known
+to be slow cannot be given more room without editing code.
+
+**Where:** `server/src/builder/chat.ts:113`, `web/src/api.ts:4`,
+`web/src/components/ProviderDialogs.tsx:84`, `server/src/langgraph/models.ts:98`,
+`server/src/builder/modelList.ts:55`
+
 
 
 

@@ -52,6 +52,31 @@ npm start                    # prod: API + built UI on :5175
 - Branching is expressed by `run()` returning `branches: ["true"]`; conditional edges
   map that to outgoing `sourceHandle` ids and skip dead nodes (emitted as
   `node.skipped` by the run adapter).
+- The AI builder lives in `server/src/builder/`: `catalog.ts` (system prompt built from
+  `nodeMetas` + `defaultConfig`), `ops.ts` (op DSL, apply, placement, `validateGraph`
+  via the compiler's exported `planGraph`, `lintGraph`), `chat.ts` (model loop,
+  parse/repair/lenient salvage, mock turn), `session.ts` (in-memory provider keys),
+  `modelList.ts` (provider model listing), `providerError.ts` (vendor-error mapping).
+  `POST /api/builder/chat` and `POST /api/builder/models` are in `server/src/index.ts`;
+  the panel is `web/src/components/BuilderPanel.tsx` with dialogs in
+  `web/src/components/ProviderDialogs.tsx`.
+- `/provider` and `/model` are handled in the panel's `submit()` and must never be sent
+  to the model. Config is per provider (`{ apiKey, baseURL }` in `localStorage`), and
+  `loadSettings` migrates the v1 single-key shape — keep that migration when changing
+  the shape again. Base URL only applies to OpenAI (`buildModel` ignores it elsewhere).
+  Model listing filters OpenAI's non-chat ids and Gemini's media ids; add a provider to
+  `web/src/providers.ts` *and* `builder/modelList.ts` together.
+- Builder output is **ops, not graphs**: `add_node` / `update_node` / `delete_node` /
+  `connect` / `disconnect`. Edge ops are deferred until after node ops so op order does
+  not matter. New nodes are placed right of their parent — never ask a model for
+  coordinates.
+- Nothing reaches the canvas unless `validateGraph` passes, which reuses the compiler's
+  `planGraph`. The node ceiling is `MAX_NODES` in `catalog.ts` and is interpolated into
+  the prompt, so change it there rather than in prose. Do not let the builder add `code`
+  nodes.
+- `builder/session.ts` holds provider keys in memory so generated agent nodes can run
+  with the key typed into the panel. Never put a key in node config (it would land in
+  SQLite and exports).
 - Express 5 + zod validation at the route boundary. `node:sqlite` (`DatabaseSync`) is
   used directly — no ORM.
 - Every non-obvious choice gets an entry appended to `DECISIONS.md` in the same turn it
@@ -70,6 +95,15 @@ npm start                    # prod: API + built UI on :5175
   "capture into `state.errors`" wrapper intact.
 - `process.loadEnvFile()` reads `.env` from the cwd (server workspace) — put keys in
   `server/.env`.
+- The AI builder needs the server restarted after changes in `server/src/builder/`; on
+  `--watch-path` this is automatic, but an in-flight chat call dies with the process.
+  Small models (Gemini flash) invent node ids they never add — this is why edge ops are
+  deferred and repaired with the explicit id list. Test changes with
+  `provider: "mock"` first: it exercises the whole pipeline with no key or quota.
+- Builder model calls abort after 60s (`chat.ts`) and the browser gives up after 200s
+  (`api.ts`). Keep the outer bound above 3×60s or a repair chain is cut off mid-flight.
+  Base URLs are validated as `http(s)` in the dialog and on the server — never pass a
+  path or a `file:///` URL to `fetch`.
 - Windows PowerShell: quote browser refs (`agent-browser click "@e4"`), `@e4` is a
   splat operator otherwise.
 

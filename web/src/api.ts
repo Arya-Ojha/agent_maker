@@ -1,10 +1,24 @@
 import type { NodeTypeMeta, Run, StoredRunEvent, Workflow, WorkflowSummary } from "./types.ts";
 
+/** Three model calls can take 3 × 60s server-side; this is the outer safety net. */
+const REQUEST_TIMEOUT_MS = 200_000;
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
-    ...init,
-    headers: init?.body ? { "Content-Type": "application/json" } : undefined,
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...init,
+      headers: init?.body ? { "Content-Type": "application/json" } : undefined,
+      signal: init?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      throw new Error(
+        "The request timed out after 200 seconds. Check the provider and base URL, or the server log.",
+      );
+    }
+    throw error;
+  }
   if (!response.ok) {
     const body = await response.text();
     let message = body || `${response.status} ${response.statusText}`;
@@ -46,4 +60,22 @@ export const api = {
     request<Run & { events: StoredRunEvent[] }>(`/api/runs/${runId}`),
   cancelRun: (runId: string) =>
     request<{ canceled: boolean }>(`/api/runs/${runId}/cancel`, { method: "POST" }),
+  builderChat: (body: {
+    message: string;
+    graph: Workflow["graph"];
+    history: Array<{ role: "user" | "assistant"; content: string }>;
+    provider: string;
+    model: string;
+    apiKey?: string;
+    baseURL?: string;
+  }) =>
+    request<{ graph: Workflow["graph"]; reply: string; warnings: string[] }>(
+      "/api/builder/chat",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  builderModels: (body: { provider: string; apiKey?: string; baseURL?: string }) =>
+    request<{ models: string[] }>("/api/builder/models", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 };

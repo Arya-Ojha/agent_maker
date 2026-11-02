@@ -6,6 +6,7 @@ import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { ChatOpenAI } from "@langchain/openai";
 import { NodeExecutionError } from "../nodes/types.ts";
 import { PROVIDERS, DEFAULT_MODELS, type ProviderId } from "../engine/providerMeta.ts";
+import { sessionKey } from "../builder/session.ts";
 
 const ENV_KEYS: Record<Exclude<ProviderId, "mock">, string> = {
   openai: "OPENAI_API_KEY",
@@ -21,14 +22,20 @@ const ENV_KEY_FALLBACKS: Partial<Record<Exclude<ProviderId, "mock">, string[]>> 
 function resolveKey(provider: Exclude<ProviderId, "mock">, override?: string): string {
   const primary = process.env[ENV_KEYS[provider]];
   const fallback = ENV_KEY_FALLBACKS[provider]?.map((key) => process.env[key]).find(Boolean);
-  const key = override?.trim() || primary || fallback;
+  // A key typed into the AI panel lives in memory only (see builder/session.ts).
+  const key = override?.trim() || primary || fallback || sessionKey(provider);
   if (!key) {
     const accepted = [ENV_KEYS[provider], ...(ENV_KEY_FALLBACKS[provider] ?? [])].join(" / ");
     throw new NodeExecutionError(
-      `No API key for provider "${provider}". Set ${accepted} in server/.env or fill in the node's apiKey field.`,
+      `No API key for provider "${provider}". Set ${accepted} in server/.env, fill in the node's apiKey field, or set one with /provider in the AI panel.`,
     );
   }
   return key;
+}
+
+/** Same resolution the nodes use, exposed for model listing. */
+export function providerKey(provider: Exclude<ProviderId, "mock">, override?: string): string {
+  return resolveKey(provider, override);
 }
 
 /**
@@ -86,6 +93,11 @@ export function buildModel(config: ModelConfig): BaseChatModel {
     case "openai": {
       const key = resolveKey("openai", apiKey);
       const baseUrl = config.baseURL?.trim();
+      if (baseUrl && !/^https?:\/\//i.test(baseUrl)) {
+        throw new NodeExecutionError(
+          `Base URL must start with http:// or https:// (got "${baseUrl}").`,
+        );
+      }
       const options: ConstructorParameters<typeof ChatOpenAI>[0] = {
         apiKey: key,
         model: modelId,

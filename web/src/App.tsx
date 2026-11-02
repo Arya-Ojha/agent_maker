@@ -10,6 +10,7 @@ import {
 import type { NodeType, NodeTypeMeta, RunStatus, StoredRunEvent } from "../../shared/types.ts";
 import { api } from "./api.ts";
 import Canvas from "./components/Canvas.tsx";
+import { BuilderPanel } from "./components/BuilderPanel.tsx";
 import { Inspector, type NodeRuntime } from "./components/Inspector.tsx";
 import { NodePalette } from "./components/NodePalette.tsx";
 import { RunPanel } from "./components/RunPanel.tsx";
@@ -20,6 +21,7 @@ import {
   toGraph,
   type FlowEdge,
   type FlowGraphNode,
+  type Graph,
   type NodeStatus,
   type NodeTypeMap,
   type Workflow,
@@ -51,6 +53,8 @@ export default function App() {
   const [runStatus, setRunStatus] = useState<RunStatus | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const [showRun, setShowRun] = useState(false);
+  const [panel, setPanel] = useState<"inspector" | "builder">("inspector");
+  const [fitTick, setFitTick] = useState(0);
 
   const workflowIdRef = useRef<string | null>(null);
   workflowIdRef.current = workflowId;
@@ -187,6 +191,23 @@ export default function App() {
       setDirty(true);
     },
     [setNodes, setEdges],
+  );
+
+  /** Replaces the canvas with a graph produced by the AI builder. */
+  const applyGraph = useCallback(
+    (next: Graph) => {
+      setNodes(toFlowNodes(next, meta));
+      setEdges(toFlowEdges(next));
+      setSelectedId(null);
+      setRuntime({});
+      setEvents([]);
+      setRunId(null);
+      setRunStatus(null);
+      setShowRun(false);
+      setDirty(true);
+      setFitTick((tick) => tick + 1);
+    },
+    [meta, setNodes, setEdges],
   );
 
   /* ---------------------------------- save -------------------------------- */
@@ -402,6 +423,14 @@ export default function App() {
 
           {notice && <span className={`notice ${notice.kind}`}>{notice.text}</span>}
 
+          <button
+            type="button"
+            className={`btn ghost${panel === "builder" ? " active" : ""}`}
+            onClick={() => setPanel((current) => (current === "builder" ? "inspector" : "builder"))}
+            title="Build or edit this workflow with AI"
+          >
+            ✦ AI
+          </button>
           <button type="button" className="btn ghost" onClick={() => void save()} disabled={busy}>
             Save
           </button>
@@ -459,9 +488,12 @@ export default function App() {
             onNodesChange={handleNodesChange}
             onEdgesChange={handleEdgesChange}
             onConnect={handleConnect}
-            onSelect={setSelectedId}
+            onSelect={(nodeId) => {
+              setSelectedId(nodeId);
+              if (nodeId) setPanel("inspector");
+            }}
             onAddNode={(type, position) => addNode(type, position)}
-            fitSignal={showRun && runStatus ? 1 : 0}
+            fitSignal={fitTick + (showRun && runStatus ? 1 : 0)}
           />
 
           {showRun && runStatus && (
@@ -478,13 +510,22 @@ export default function App() {
           )}
         </main>
 
-        <Inspector
-          node={selected}
-          meta={selected ? meta.byType[selected.data.nodeType] : undefined}
-          runtime={selected ? runtime[selected.id] : undefined}
-          onChange={(patch) => selected && patchNode(selected.id, patch)}
-          onDelete={() => selected && deleteNode(selected.id)}
-        />
+        {panel === "builder" ? (
+          <BuilderPanel
+            key={workflowId ?? "new"}
+            graph={toGraph(nodes, edges)}
+            onApply={applyGraph}
+            onClose={() => setPanel("inspector")}
+          />
+        ) : (
+          <Inspector
+            node={selected}
+            meta={selected ? meta.byType[selected.data.nodeType] : undefined}
+            runtime={selected ? runtime[selected.id] : undefined}
+            onChange={(patch) => selected && patchNode(selected.id, patch)}
+            onDelete={() => selected && deleteNode(selected.id)}
+          />
+        )}
       </div>
     </MetaContext.Provider>
   );
