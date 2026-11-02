@@ -32,7 +32,8 @@ treat it as documentation, not a diary.
 - **Nodes** — 0014–0021: registry, switch, delay, edit fields, split, merge, code, log
 - **Delivery** — 0022–0023: proxy/static serving, run-result derivation
 - **Stack choices** — 0024–0032: React, Express, zod, SSE, npm workspaces, Node, LangChain, CSS, state
-- **Code structure** — 0033–0048: function shapes, arguments, return values, and why not the alternative
+- **Code structure** - 0033-0048: function shapes, arguments, return values, and why not the alternative
+- **Canvas interactions** - 0049: mouse-only edge removal
 
 ## Stack at a glance
 
@@ -1556,5 +1557,61 @@ markup); rendering `JSON.stringify(event)` (unreadable, no status colours).
 count. Markup and styling are coupled in this file; a design change touches both.
 
 **Where:** `web/src/components/RunPanel.tsx:91`
+
+---
+
+### 0049 — Edges get a custom type with a hover "×", not a context menu
+**Date:** 2026-11-03
+
+**Context:** Removing a connection required selecting the line and pressing Delete.
+The line is drawn at `stroke-width: 1.6` with no interaction width, so a click three
+pixels off the stroke hit the pane and cleared the selection instead. The gesture was
+undiscoverable, and it had no mouse-only form.
+
+**Decision:** Register a custom edge type (`flowEdge` → `DeletableEdge`) that renders
+`getSmoothStepPath` + `BaseEdge` with `interactionWidth: 24`, and paints a 20px `×`
+button at the path midpoint through `EdgeLabelRenderer`. The button appears while the
+edge is hovered or selected and deletes through `deleteElements({ edges: [{ id }] })`.
+
+**Rejected shape:**
+
+```tsx
+// Right-click → context menu: needs a menu component, outside-click dismissal,
+// and a second fixed-position layer in canvas coordinates.
+<BaseEdge onContextMenu={(e) => openMenu(e.clientX, e.clientY, id)} … />
+```
+
+```tsx
+// Keeping the × always visible: honest, but a dense graph turns into a field of
+// × buttons competing with the node cards.
+```
+
+**Why:** Hover is where the pointer already is, so no mode switch or documentation is
+needed. `deleteElements` is the same code path the Delete key uses, so it fires
+`onEdgesChange` with a `remove` change — meaning `App.tsx:122` sets the dirty flag and
+`toGraph` drops the edge on save without any new plumbing. Putting the button in
+`EdgeLabelRenderer` (an HTML portal) keeps it a constant 20px at every zoom, and
+`interactionWidth` widens the invisible hit stroke without changing the drawing.
+
+**Alternatives rejected:** Context menu (more UI surface, discoverability is no better
+than hover, and it would need to position itself in screen space); an always-visible ×
+(noise on dense graphs); select-then-Delete as the only gesture (keyboard-only, and the
+hit target stays 1.6px); deleting from the Inspector's edge list (there is no edge
+list); `onEdgeClick` toggle that deletes on a second click (a single click already
+selects, so a double-click would fight canvas zoom).
+
+**Trade-offs:** The button is hidden while `hovered || selected`, so moving the pointer
+from the line onto the button would unmount it mid-move — `EdgeLabelRenderer` lives
+outside the SVG `<g>` that owns the hover state. Hence `HIDE_DELAY_MS = 140`: leaving
+the line *schedules* the hide so the pointer can land on the button. That timer is the
+fragile part; a slower pointer on a laggy machine can still blink the button away. The
+× sits on top of the line, so a midpoint that overlaps a node card is hard to see (the
+elbow of a smoothstep path usually avoids this). There is no undo and no confirmation —
+one click is final until Ctrl+Z exists, which it does not. Zooming with the wheel while
+hovering keeps the button mounted but repositions it on the next render.
+
+**Where:** `web/src/components/DeletableEdge.tsx:22`,
+`web/src/components/Canvas.tsx:23`, `web/src/styles.css:466`
+
 
 

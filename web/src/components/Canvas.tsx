@@ -9,13 +9,19 @@ import {
   addEdge,
   useReactFlow,
   type Connection,
+  type EdgeTypes,
   type OnConnect,
   type OnEdgesChange,
   type OnNodesChange,
 } from "@xyflow/react";
 import FlowNodeCard from "./FlowNodeCard.tsx";
+import { DeletableEdge } from "./DeletableEdge.tsx";
 import { useMeta } from "../metaContext.ts";
 import type { FlowEdge, FlowGraphNode, NodeType } from "../types.ts";
+
+/** Module scope, not a hook: React Flow warns if `edgeTypes` changes identity. */
+const EDGE_TYPES: EdgeTypes = { flowEdge: DeletableEdge };
+const EDGE_DEFAULTS = { type: "flowEdge", animated: false } as const;
 
 interface Props {
   nodes: FlowGraphNode[];
@@ -73,7 +79,8 @@ function CanvasInner({ nodes, edges, onNodesChange, onEdgesChange, onConnect, on
         onPaneClick={() => onSelect(null)}
         fitView
         proOptions={{ hideAttribution: true }}
-        defaultEdgeOptions={{ type: "smoothstep", animated: false }}
+        defaultEdgeOptions={EDGE_DEFAULTS}
+        edgeTypes={EDGE_TYPES}
         deleteKeyCode={["Backspace", "Delete"]}
       >
         <Background variant={BackgroundVariant.Dots} gap={22} size={1.5} color="#1e293b" />
